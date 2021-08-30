@@ -1,0 +1,757 @@
+---
+title: "PROJET DATA MINING"
+date: '`r Sys.Date()`'
+output:
+  word_document: 
+    fig_caption: yes
+    fig_height: 6
+    fig_width: 8
+    toc: yes
+    toc_depth: 4
+  html_document: default
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 4
+---
+
+# INTRODUCTION
+
+Notre base de donnée vient  du site *kaggle.com*. C'est une base de donnée fictive tirée du livre  Machine Learning with *R* de *Brett Lantzelle*. Elle contient $1338$ observations et $7$ variables:
+
+* charges :réprésente les prestations annuelles versées par la compagnie d'assurance.
+* imc: l'indice de masse corporelle mesure la corpulence de l'assuré $30\leq$ imc $< 35$ obésité modérée et imc$\geq 35$ sévère obésité.
+* enfants: le nombres d'enfants en charges 
+* sexe: le genre
+* fumeur: statut fumeur
+* region: région de résidence
+
+**Nous allons utiliser cette base de données pour prédire le coût des charges pour de futures assurés.**
+
+Dans un premier temps nous allons importer la base de données et préparer les données (nettoyage). Dans un second temps, nous procéderons à l'analyse de quelques statistiques descriptives et visualiserons les différentes relations entre les variables prédictives et la variable cible. En troisème partie, nous appliquerons plusieurs modèles statistiques (regression et arbres de décision) pour résoudre notre problème.
+En dernière partie nous procéderons à l'analyse des différents modèles en mesurant leur perfromance en terme de preédiction et déployerons le meilleur modèle.
+
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#*********************************************************************************
+#******* Importation des données et chargement des librairies nécessaires ********
+#*********************************************************************************
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(lmtest)
+library(skimr)
+library(psych)
+library(GGally)
+library(lmtest)
+library(tree)
+library(ipred)
+library(webshot)
+#*********************************************************************************
+#          ***        recodage des variables en français        ***
+#*********************************************************************************
+donnee <- read.csv("C:/R/data mining/insurance.csv",
+                   col.names = c("age",
+                                 "sexe",
+                                 "imc",
+                                 "enfants",
+                                 "fumeur",
+                                 "region",
+                                 "charges")
+                   )
+
+```
+
+```{r,background=c(0.9,0.9,0.9),echo=F echo=TRUE, r,background=c(0.9,0.9,0.9)}
+#*********************************************************************************
+# *** changements des labels des facteurs pour les adapter au système français ***
+#*********************************************************************************
+
+donnee$fumeur <-factor(donnee$fumeur,
+                       levels=c("no","yes"),
+                       labels = c("non","oui")
+                       )
+donnee$sexe <-factor(donnee$sexe,
+                     levels = c("female","male"),
+                     labels = c("femme","homme")
+                     )
+
+donnee$region <-factor(donnee$region,
+                       levels=c("northeast",
+                                "northwest",
+                                "southeast",
+                                "southwest"
+                                ),
+                       labels = c("nord-est",
+                                  "nord-ouest",
+                                  "sud-est",
+                                  "sud-ouest"
+                                  )
+                       )
+
+```
+
+# PREPATION DES DONNEES
+
+## Gestion des données manquantes
+
+```{r,echo=F}
+#*********************************************************************************
+# ***    affichage du nombre d'observations manquantes par variables   ***
+#*********************************************************************************
+
+knitr::kable(apply(is.na(donnee),2,sum) %>%rbind %>% as.data.frame )
+
+```
+
+Il n'y a pas de données manquantes dans la base de données.
+
+## Récapitulatif de la base de données
+
+
+
+```{r,echo=F}
+#*********************************************************************************
+# ************      description de notre base de données         *****************
+#*********************************************************************************
+
+knitr::kable(head(donnee))
+```
+
+
+La base de données contient 
+* 4 variables numériques:
+
+  * charges
+  * imc
+  * age
+  * enfants
+
+* 3 facteurs:
+
+  * region (sud-est, sud-ouest, nord-est, nord-ouest)
+  * fuemeurs (oui,non)
+  * sexe (femme, homme)
+
+Nous remarquons que la moyenne de *caharges* est beacoup plus grand que sa médiane.
+Cela implique une distribution biaisée des chages.
+
+# VISUALISATION
+
+## Distribution des charges
+
+```{r,fig.width=12,echo=f}
+ggplot(data = donnee,
+       mapping = aes(x=charges)
+       )+
+  geom_histogram(col="Skyblue",
+                 bins= 30
+                 )
+
+
+```
+La majorité des assurés ont des charges inférieures à 15000$\$$.
+La distribution des chgarges est biaisée pour les coûts supérieurs à 15000$\$$.
+Cela montre que la distibution des charges n'est pas idéale pour un modèle linéaire.
+
+
+## Relation entre les charges et l'âge
+
+```{r, fig.width=12,echo=F}
+ ggplot(data = donnee )+
+  geom_point(aes(x=age, y=charges,color=fumeur),
+             alpha=0.9,
+             )+
+  ggtitle("Relation entre l'âge et les charges")
+
+```
+
+Les charges sont corroleés postivement avec l'âge et cette relation ne semble pas  linéaire. Nous remarquons aussi trois grandes tendances:
+
+* les fumeurs qui ont des montants de charges plus importants
+* un groupe intermédiare constitué de fumeurs et de non fumeurs on peut supposer que les non fumeurs ont peut être des antécédants médicaux et que les fumeurs ne sont pas des fumeurs chroniques
+* un groupe constitué des non fumeurs qui ont de bas montant de charges.
+
+
+## Relation entre les charges et l'IMC
+
+
+```{r, fig.width=12,echo=F}
+ggplot(data = donnee )+
+  geom_point(aes(x=imc, y=charges,color=fumeur),
+             alpha=0.9,
+             )+
+  ggtitle("Relation entre l'IMC et les charges")
+
+```
+
+Nous remarquons que pour les non fumeurs l'IMC n'influe pas beaucoup sur les charges.
+Pour les fumeurs, les charges augmentent plus rapidement avec l'IMC. Nous notons par ailleurs un seuil au niveau imc$=30$ au-delà de ce seuil les charges sont multipliées en moyenne par deux. Ce qui est assez logique puisque cela correspond au seuil de l'obésité par conséquent la probablité d'avoir une complication en cas de maladie est grande.
+
+
+
+## Relation entre les charges et le nombres d'enfants
+
+```{r, fig.width=12,echo=F}
+ggplot(data = donnee,
+       mapping=aes(x=as.factor(enfants),y=charges)
+       )+
+ geom_boxplot(fill=c(3:8))+
+ geom_jitter(col="steelblue",alpha=0.6)+
+ ggtitle("Relation entre le nombres d'enfants et les charges")+
+ xlab("nombre d'enfants")
+
+```
+
+Nous cconstatons qu'en moyenne les individus avec $1$ enfant ou $5$ enfants ont des charges moins importantes, quant aux autres individus leurs charges semblent être égales en moyenne.
+
+## Relation entre les charges et le genre
+
+```{r, fig.width=12,echo=F}
+ggplot(data = donnee,
+       mapping=aes(x=sexe,y=charges)
+       )+
+ geom_boxplot(fill=c(7:8))+
+ geom_jitter(col="steelblue",alpha=0.5)+
+ ggtitle("Relation entre le genre et les charges")
+
+```
+
+Le genre ne  semble pas avoir un impact sur les charges en moyenne. Nous remarquons aussi qu'il y a plus d'hommes que de femmes.
+
+
+
+## Relation entre les charges et le statut fumeur ou non
+
+```{r, fig.width=12,echo=F}
+ggplot(data = donnee, 
+       mapping=aes(x=fumeur,y=charges)
+       )+
+ geom_boxplot(fill=c(7:8))+
+ geom_jitter(col="steelblue",alpha=0.5)+
+ ggtitle("Relation entre le statut fumeur ou non  et les charges")
+
+```
+
+Les fumeurs ont des chagres deux fois plus importantes que les non fumeurs.
+Le statut fumeur semble influer beacoup sur les charges.
+
+## Relation entre les charges et la région
+
+
+```{r,fig.width=12,echo=F}
+ggplot(data = donnee,
+       mapping=aes(x=region,y=charges)
+       )+
+ geom_boxplot(fill=c(5:8))+
+ geom_jitter(col="steelblue",alpha=0.5)+
+ ggtitle("Relation entre la région et les charges")
+
+```
+La région de résidence ne semble pas avoir beacoup d'imapact sur les charges.
+
+## Matrice de corrélation
+
+```{r fig.height=6, fig.width=12,echo=F}
+#*********************************************************************************
+# ************************   dummy des facteurs   ********************************
+#*********************************************************************************
+donnee$sexe <- as.numeric(donnee$sexe)
+donnee$region <- as.numeric(donnee$region)
+donnee$fumeur <- as.numeric(donnee$fumeur)
+ggcorr(donnee,label = T)
+
+```
+Nous notons une forte dépendance des charges avec le statut fumeur, une petite dépendance des charges avec l'IMC et lâge.
+
+
+# MODELES STATISTIQUES
+
+## Regressions
+
+
+
+```{r,echo=F}
+set.seed(123)
+#****** vecteur contenant les differents MSE des modeles a construire  *******
+MSE <- numeric()
+#******** on utilise 75%  pour l'apprentissage et le 25% pour le test ********
+n_train <- round(0.75 * nrow(donnee))
+train_indice <- sample(nrow(donnee), n_train)
+train <-donnee[train_indice, ]
+test <- donnee[-train_indice, ]
+
+ b<- data.frame(test[,3]) 
+ b
+ c<- data.frame(b)
+ c
+```
+Pour comparer la performance des modèles de regressions nous allons utiliser une validation croisée basée sur deux échantillons $test$ et $train$. La validation croisée k-Folds est sans doute meilleure vu le nombre d'observations, mais vu le nombre de modèles à tester et la limite de ressource informatique, nous nous limiterons au premier choix.
+
+Pour faire le choix entre le meilleur modèle parmis les deux approches arbres ou regressions, nous appliquerons k-Folds.
+
+### Modèle 1
+
+```{r Modele-1, fig.height=8, fig.width=12, message=TRUE, comment=NA,echo=F}
+#*********************************************************************************
+# *******************  On utilse toutes les variables   **************************
+#*********************************************************************************
+
+model1 <- lm(charges~.,data =train)
+a <- predict(model1,test)
+a
+n  <- data.frame(a)
+n
+MSE [1]<- mean((test$charges-predict(model1,test))^2)
+summary(model1)
+par(mfcol=c(2,2))
+plot(model1)
+```
+
+Notre modèle exprime à peine $74.47\%$ des charges, *sexe* et *region* ne sont pas significatifs. La normalité des résidus n'est pas grantie au-delà du premier quantile, ce qui étaye ce que nous avons constaté dans la phase descriptive. Nous remarquons aussi plusieurs points influents et la relation n'est pas linéaire. 
+
+Pour séléctionner les prédicteurs significatifs plusieurs méthode existent:
+
+* la méthode *forward* qui consiste à insérer les prédicteurs dans le modèle un à un  par odre de leur pouvoir de prédiction.
+* la méthode *backward* qui consite à mettre touts les prédicteurs et enlever progressivement les prédicteurs qui expliquent le moins la variable cible.
+
+* un mélange des deux méthodes précitées, la méthode *AIC(Akaike Information Criterion)*
+
+### Modèle 2
+
+Dans ce modèle, nous allons appliquer la méthode *AIC* pour le choix des variables pertinentes.
+
+```{r,model2,comment=NA,fig.width=12,echo=F}
+model2 <- MASS::stepAIC(model1,direction = "both",trace = 0)
+MSE [2]<- mean((test$charges-predict(model2,test))^2)
+summary(model2)
+par(mfrow=c(2,2))
+plot(model2)
+```
+
+Nous obtenons une infime amélioration $74.49\%$, la variable sexe a été enlevée du modèle. En ce qui conerne les résidus les remarques faites pour le *model1* susbsistent.
+
+Comme nous l'avons vu dans le partie descriptive, l'influence de l'IMC sur les charges est importante au seuil de 30. Nous allons remplacer la variable *imc* par une variable binaire qui mesure le critère obèse ou non d'un assuré. Nous rappelons qu'une personne est considérée comme obèse si son IMC est supérieur ou égal à $30$.
+
+
+```{r,echo=F}
+#*********************************************************************************
+# **********************  Ajout du facteur obèsité   *****************************
+#*********************************************************************************
+
+train$obese <-ifelse(train$imc>=30,1,0)
+test$obese <-ifelse(test$imc>=30,1,0)
+knitr::kable(tail(train))
+```
+
+
+
+### Modèle 3
+
+Dans ce modèle nous enlevons region et sexe et nous remplaçons l'IMC par le critère d'obésité.
+
+```{r,model3,comment=NA,fig.width=12,echo=F}
+model3 <- lm(charges~. -sexe-region-imc, data = train)
+MSE [3]<- mean((test$charges-predict(model3,test))^2)
+MSE[3]
+summary(model3)
+```
+
+Nous obtenons un MSE plus petit que celui obtenu avec le modèle précédent mais en terme de pouvoir prédictif, il n'y a peu d'amélioration.
+
+### Modèle 4
+
+Comme nous l'avons vu dans la première parie de notre projet, il exite une relation entre *imc* et *fumeur*. Nous allons établir un nouveau modèle en tenant en compte cette relation.
+
+```{r,model4,comment=NA,echo=F}
+model4 <- lm(charges~. -sexe-region-imc+imc*fumeur, data = train)
+MSE [4]<- mean((test$charges-predict(model4,test))^2)
+summary(model4)
+```
+Nous obtenons un meilleur MSE et un pouvoir prédictif de plus de $84\%$
+
+### Modèle $p\geq5$
+
+
+La relation entre l'âge et les charges n'est pas linéaire.
+Nous allons prouver cela avec le test de Rainbow.
+
+```{r,comment=NA,echo=F}
+test_model <-lm(charges~age,data = donnee)
+raintest(test_model)
+```
+La p_value$<0.05$, ce qui prouve la non-linéarité de age et charges
+
+
+Nous allons construire d'autres modèles en tenant en compte de la non linéarité.
+
+
+```{r,modelp,fig.width=12, message=F, warning=F,comment=NA,echo=F}
+for (p in 1:9)
+  {   #*********** polynômes de degrés 2 supériereurs à deux  ***************
+      train$age_poly <-train$age^(p+1)
+      test$age_poly <-test$age^(p+1)
+      model_p <- lm(charges~. -imc-sexe-region+imc*fumeur, data = train)
+      summary(model_p)
+      MSE [p+4]<- mean((test$charges-predict(model_p,test))^2)
+   }
+length(MSE)
+ggplot(data=data.frame(x=seq_len(p+4),y=MSE),
+       mapping = aes(x,y)
+       )+
+  geom_point(col="tomato4",pch=19)+
+  geom_line(col="tomato4")+
+  xlab("modèles")+
+  ylab("MSE")+
+  ggtitle("MSE pour les différents modèles")
+```
+
+Le meilleur modèle est obtenu lorsque $p=4$ avec un pouvoir de prédiction de $84.6\%$ et un MSE minimal par rapport aux autres modèles.
+
+### Test du meilleur modèle
+
+```{r,fig.width=12,comment=NA,echo=F}
+train$age_poly <-train$age^4
+test$age_poly <-test$age^4
+best_model <-lm(charges~. -imc-sexe-region+imc*fumeur, data = train)
+par(mfrow=c(2,2))
+plot(best_model)
+summary(best_model)
+```
+### ANLYSE DES RESIDUS
+
+Le modèle semble être adéquat, vérifions cela grâce au test de *Rainbow*.
+
+```{r,Adequation,comment=NA,echo=F}
+raintest(best_model)
+
+```
+La p-value $>0.05$, le modèle est adéquat.
+```{r,Independance,comment=NA,echo=F}
+dwtest(best_model)
+
+```
+La p-value $>0.05$, nous pouvons en conclure l'indépendance des résidus.
+
+Sur le graphe *Qqplot* la distibution des résidus n'est pas normale. Ceci est dû au fait que la distribution des charges est biaisée. Le test de Shapiro-Wilk, nous le confirme.
+
+```{r,normalite,comment=NA,echo=F}
+shapiro.test(best_model$residuals)
+
+```
+p-value $<0.05$
+
+Pour tester l'homogénéité des résidus, nous utilisons le test de  Breush-Pagan.
+
+```{r,homgeneite,comment=NA,echo=F}
+bptest(best_model)
+
+```
+La p-value $>0.05$, nous pouvons en conclure l'homogénéité  des résidus.
+
+### Déploiement du modèle
+
+```{r,fig.width=12,echo=F}
+#charges prédites
+test$predicted_charges <- predict(best_model, newdata = test)
+
+
+test$fumeur <- factor(as.factor(test$fumeur),
+                      labels=c("non","oui")
+                      )
+test$obese <- factor(as.factor(test$obese),
+                      labels=c("non","oui")
+                      )
+test$residus <-test$charges-test$predicted_charges
+
+
+ggplot(data = test,
+       mapping =aes(x = predicted_charges, y = charges) 
+      )+
+  geom_point(aes(color=fumeur,shape=obese,size=enfants)) +
+  geom_abline(color = "tomato4") +
+  xlab("valeurs prédites")+
+  ggtitle("Valeurs réelles / Valeurs prédites")
+ggplot(data = test,
+       mapping =aes(x =predicted_charges, y =residus) 
+      )+
+  geom_pointrange(aes(ymin=0,
+                      ymax=residus,
+                      color=fumeur
+                      )
+                  )+
+  ggtitle("Residus")+
+  xlab("valeurs prédites")
+
+
+```
+
+Le modéle prédit  en moyenne les charges entre $0$ et $18000\$$ , mais a des difficultés pour  prédire celle d'un certain groupe d'assurés non fumeurs et les charges supérieurs à $18000\$$.
+
+Pour améliorer le modèle de regression d'autres variables sont nécessaires comme par exemple les antécédents médicaux, et la statut professionnel...
+
+
+## ARBRES DE DECISION
+
+### Arbre de regression
+Les arbres de décision permettent de resoudre des problèmes de discrimination en segmentant de façon progressive un échantillon en vue de la prédiction d’un résultat. 
+
+
+**Arbre~de~regresion~sur~toutes~les~données**\
+```{r,echo=F}
+test$obese <- as.numeric(test$obese)
+train$obese <- as.numeric(train$obese)
+test$fumeur <- as.numeric(test$fumeur)
+train$fumeur <- as.numeric(train$fumeur)
+```
+```{r, warning=FALSE,echo=F,comment=NA }
+# Arbre de décision : regression
+tree_prime = tree(charges~.  ,donnee)
+summary(tree_prime)         # arbre de regression de toute les données
+# Représentation de l'arbre
+plot(tree_prime, main = "grand arbre", col=1)
+text(tree_prime)
+# Prediction de la regression sur toutes les données
+pred.tree_prime = predict(tree_prime,donnee)
+# Erreur de prédiction MSE
+MSE.tree = mean((donnee$charges - pred.tree_prime)^2)
+MSE.tree
+
+```
+
+L'arbre fait la segmentation à patir de trois variables(fumeur, imc et age). Les autres variables ne sont pas pertinentes. Même en les enlevant dans le modèle, les resultats restent inchanger. On obtient 4 noeuds. L'erreur de prediction étant $25298696$. 
+
+```{r, warning=FALSE,echo=F,comment=NA }
+tree_prime1 = tree(charges~fumeur+poly(age,2)+imc , data=donnee)
+summary(tree_prime1)         # arbre de regression de toute les données
+# Représentation de l'arbre
+plot(tree_prime1, main = "grand arbre", col=1)
+text(tree_prime1)
+# Prediction de la regression sur toutes les données
+pred.tree_prime1 = predict(tree_prime1, donnee)
+# Erreur de prédiction MSE
+MSE.tree1 = mean((donnee$charges - pred.tree_prime1)^2)
+MSE.tree1
+
+```
+
+Ici on fait l'arbre de regression avec les polynomes orthogonaux; on remarque que non seulement la segmentation reste pareil que le modèle précédent, le MSE $25298696$ aussi ne change pas .       
+
+**Arbre de regresion sur les données d'apprentissage**
+```{r, warning=FALSE,echo= F,comment=NA}
+
+tree_prime.train = tree(charges~., data=train)
+summary(tree_prime.train)         # arbre de regression des données train
+# Représentation de l'arbre
+plot(tree_prime.train, main = " arbre train", col=1)
+text(tree_prime.train)
+# Prediction de la regression (train) avec les données test 
+pred.tree.test = predict(tree_prime.train,test)
+# Erreur de prédiction MSE
+MSE.tree2 = mean((test$charges - pred.tree.test)^2)
+MSE.tree2
+```
+
+
+
+```{r, warning=FALSE,echo=F,comment=NA}
+tree_prime.train1 = tree(charges~ fumeur + poly(age, 2) +imc , data= train)
+# arbre de regression des données train
+summary(tree_prime.train1)         
+# Représentation de l'arbre
+plot(tree_prime.train1, main = " arbre train", col=2)
+text(tree_prime.train1)
+# Prediction de la regression (train) avec les données test 
+pred.tree.test1 = predict(tree_prime.train1,test)
+# Erreur de prédiction MSE
+MSE.tree3 = mean((test$charges - pred.tree.test1)^2)
+MSE.tree3
+
+
+```
+
+
+Les 2 modèles ci dessus de l'arbre de regression donnent les mêmes resultats pour la segmentation et leur Residual mean deviance sont identiques. Les MSE eux sont différents. Celui du modèle polynomial est plus petit.
+
+
+```{r,fig.width=12,comment=NA,echo=F}
+MSE.tree4 = numeric()
+for (p in 1:9)
+  {
+      train$age_poly <-train$age^(p+1)
+      test$age_poly <-test$age^(p+1)
+      model_p <- tree(charges~. -imc-sexe-region, data =train)
+      MSE.tree4 [p]<- mean((test$charges-predict(model_p,test))^2)
+}
+
+MSE.tree4
+summary(model_p)
+```
+
+Les MSE sont tous identiques quelque soit le dégré des polynomes. Ils sont identique à celui du modèle 1 ainsi que leur Residual mean deviance. D'où l'utilité de garder le modèle 1.
+
+
+*Interpretation :*\
+Les resultats de l'arbe de décision permettent de dire que trois variables (age, fumeur et imc) sont importantes dans l'explication des primes d'assurance. Les primes étant dans le cadre d'une assurance maladie, il est évident que la variable fumeur soit la plus pertinente car en réalité, le fait d'être un fumeur ou non a un grand impact sur la santé. Pour cela d'un point de vu général, les charges sont plus grandes pour les fumeurs.
+Ensuite vient la variable bmi, qui représente l'indice de masse corporelle. C'est un facteur qui influence aussi la santé. Mais son impacte est plus important lorsqu' il est associé à la variable fumeur. 
+Quant à la variable age, elle explique à elle aussi la distribution des primes. Cependant dans la vie actuelle, la santé de l'homme se dégrade avec l'augmentation de l'âge. C'est pourquoi les primes sont généralement grandes pour des assurés plus agés. Et cela devient une évidence quand l'age est associé au statut de fumeur.
+
+Les autres variables children, region et sexe, n'influencent pas vraiment la distribution des primes d'assurance maladie. Le sexe est considéré comme un facteur discrimant en assurance, raison pour laquele il n'est plus pris en compte dans la determination des primes d'assurance. children qui represente le nombre d'enfants de l'assuré, on peut dire que cette variable ne permet pas vraiment de déterminer son etat de santé. Enfin la region impacte peu la prime. Même si dans certain cas le risque de contracter une maladie est plus élevé dans certaines regions.
+
+L'éfficacité de cette méthode est appréciée en évaluant les erreurs de prédictions. Au regard des resultats obtenus, on peut dire que le modèle avec l'arbre de regression est moins éfficace que les methodes de regressions de la partie 1. Car ici les erreurs de prédiction sont plus grandes\
+
+**Avantages et limites :**
+C'est une méthode éfficace car traite les grandes bases avec rapidité sans difficulté, elle est non paramétrique et robuste face aux données aberrantes et manquantes. Cependant elle a un problème de stabilité sur les petites bases de données et a la difficulté de détecter des intéractions entre les variables.
+
+
+\
+**Remarque:**
+\
+Lorsque l'arbre de décision est court, le biais est fort et la variance est faible.\
+Lorsque l'arbre de décision est profond, le biais est faible et la variance est fort.\
+Il existe donc plusieurs méthodes développées principalement pour résoudre le problème de la variance élevée des estimateurs fournis par les arbres de décision à savoir : Bagging, Random Forest et Boosting.
+\ Dans notre étude on utilisera la méthode Bagging
+
+### Bagging
+
+**Définition :**  \
+Le bagging consite à la construction de plusieurs arbres par re-échantillonnage avec remise (bootstrap);
+La methode bagging s’applique à toute méthode de modélisation (régression, CART) et réduit sensiblement l’erreur de prévision, que dans le cas de modèles instables.  
+
+La fonction bagging du package ipred permet de faire l'estimation. 
+```{r, warning=FALSE,echo=F}
+bag.prime = bagging(charges~. , data = train, nbagg=50);     # nbagg = 100 représente le nombre de replication de l'échantillon bootstrap
+# Prediction 
+pred.bag = predict(bag.prime,test)
+# Erreur de prédiction
+MSE_bag = mean((test$charges - pred.bag)^2) ; MSE_bag
+```
+
+On voit bien qu'à travers les resultats du bagging que l'erreur de prédiction a bien diminué comparé à celui de l'arbre de regression simple. Le modèle utilisée etant la regression multiple, testons cette methode bagging avec l'intéraction entre les variables.
+
+
+```{r, warning=FALSE,echo=F}
+ 
+bag.prime1 = bagging(charges~. +imc*fumeur, data =train, nbagg=50)
+# Prediction 
+pred.bag1 = predict(bag.prime1,test)
+# Erreur de prédiction
+MSE_bag1 = mean((test$charges - pred.bag1)^2) ; MSE_bag1
+
+```
+
+Bagging peut détecter les intéraction entre les variables contrairement à la méthode des arbres de regression. Les resultats ici semblent identiques au modèle précédent. Même si l'erreur de prediction est plus grand.
+
+```{r,echo=F,fig.width=12}
+MSE_bag2 = numeric()
+for (p in 1:9)
+  {
+      train$age_poly <-train$age^(p+1)
+      test$age_poly <-test$age^(p+1)
+      bag.prime2 = bagging(charges~.-imc-sexe-region , data =train, nbagg=50)   
+      # Prediction 
+      pred.bag2 = predict(bag.prime2,test)
+      # Erreur de prédiction
+      MSE_bag2[p] = mean((test$charges - pred.bag2)^2) 
+}
+ggplot(data=data.frame(x=1:9,y=MSE_bag2),
+       mapping = aes(x,y))+
+  geom_point(col="tomato4")+
+  geom_line(col="tomato4")+
+  xlab("dégré des polynomes")+
+  ylab("Taux d'erreur")
+```
+
+Quant au modèle avec les polynomes, les segmentations sont pareilles, les MSE varient d'un polynome à l'autre.
+Ils varient entre $22900000~~ et~~23400000$.
+Dans tous les cas, la méthode bagging améliore la méthode d'arbre de regression, car elle reduit l'erreur de prévision.
+\ Cependant, vérifions son éfficacité en fonction du nombre de réplication.
+
+
+```{r,echo=F,fig.width=12}       
+####################### ATTENTION TEMPS D'EXECUTION GRAND #########################
+
+#bagging et nombre de réplications
+B <- c(1,5,10,20,50,100)
+#une session pour un nombre d'arbres égal à b
+bagging.rep <- function(b){
+model.bagging <- bagging(charges ~ ., data =train, nbagg=b)
+p.bagging <- predict(model.bagging,test)
+return(mean((test$charges - p.bagging)^2))
+}
+#mesurer l'erreur en répétant l’opération 15 fois
+erreur <- replicate(15,sapply(B,bagging.rep))
+m.erreur <- apply(erreur,1,mean)
+ggplot(data.frame(B,m.erreur),
+       mapping = aes(x = B,y=m.erreur)
+       )+
+ geom_point(col="tomato4")+
+ geom_line(col="tomato4")+
+ ylab("Taux d'erreur")+
+ xlab("B")
+```
+
+
+Les resultats permettent de dire que plus le nombre de replication du bagging est grand, plus le MSE est petit. Donc lorsque le nombre de replication du bagging est grand, cela diminue fortement la variance et l'erreur de prédiction plus faible. Ce qui traduit que le pouvoir de prédiction du modèle est meilleure lorsque le nombre de replication est assez grand. Au delà d'un certain nombre de réplication, la prédiction n'évolue plus grandement. 
+\
+**Remarque :**
+Faire du bagging sur un modèle stable est insignifiant, et le temps de calcul est élevé.
+
+### Conclusion
+
+Les methodes d'arbres de décision permettent de mieux présenter un modèle dans la mesure où la comprehension serait facile pour des non statisticiens. Par contre dans le cas de notre base de données, les paramètres qui définissent la qualité de prédiction ($MSE$ et pouvoir explicatif du modèle $R^2_{ajusté}$) sont meilleurs dans les méthodes de regression (soit la première partie) comparés aux méthodes d'arbres de décision (y compris le bagging).
+
+
+
+# Validation croisée K-FOlD pour le choix du meilleur modèle
+
+```{r,echo=F,fig.width=12}
+# méthode de k-fold en un seul pour les methodes de (regression, arbre)
+donnee$age4 <- donnee$age^4
+donnee$obese <-ifelse(donnee$imc>=30,1,0)
+K = 5
+MSECV = numeric(); MSECV1 = numeric(); MSECV2 = numeric()
+obs = seq(1:nrow(donnee))
+alea = sample(obs, nrow(donnee))
+for ( i in 1: nrow(donnee)){
+  ind = alea[seq(i, nrow(donnee), K)]
+  train = donnee[-ind, ]
+  test = donnee[ind,]
+  best_reg = lm(charges~. -sexe-region+imc*fumeur, data = train)
+  tre = tree(charges~. -sexe-region , data =  train)
+  bag = bagging(charges~., data = train, nbagg = 5)
+  MSECV[i] = mean((predict(best_reg, test) - test$charges)^2) 
+  MSECV1[i] = mean((predict(tre, test) - test$charges)^2)
+  MSECV2[i] = mean((predict(bag, test) - test$charges)^2) 
+}
+dat_MSE= data.frame(mse=c(mean(MSECV),mean(MSECV1),mean(MSECV2)),
+                    x=1:3
+                    )
+                    
+ggplot(data=dat_MSE,
+       mapping = aes(x,mse)
+       )+
+  geom_point(col="tomato4")+
+  geom_line(col="tomato4")+
+  xlab("models")+
+  ylab("MSE")
+
+```
+
+Le modèle de regression est plus performant que les modèles d'arbres de décision.
+
+# CONCLUSION
+
+Ce projet nous a permis de mettre en pratique les différentes méthodes statistiques vues en cours. Il nous a aussi permis de comprendre l'intêret  de la visualisation statistque dans le travail d'un data scientiste. Comprendre les données d'études,facilite le travail de modélisation. C'est pourquoi la préparation de données est importante dans les métiers de data science. Les  différents modèles que nous avons traités peuvent être améliorer si le jeu de données était plus riche.
+
+
+### Bibliographie
+
+https://www.kaggle.com/mirichoi0218/insurance
+
+https://towardsdatascience.com/why-and-how-to-cross-validate-a-model-d6424b45261f
+
+http://adv-r.had.co.nz/Data-structures.html\
+
+
